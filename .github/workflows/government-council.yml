@@ -50,18 +50,54 @@ jobs:
               for e in root.iter():
                   if lname(e.tag)=="TEXT": return e.text or ""
               return ""
+          def dispatch_title(e):
+              for c in e.iter():
+                  if lname(c.tag)=="TITLE": return clean(c.text)
+              return ""
+          def dispatch_id(e):
+              for attr in ("id","dispatchid","ID","DISPATCHID"):
+                  v=e.attrib.get(attr)
+                  if v: return v
+              for c in e.iter():
+                  if lname(c.tag)=="DISPATCHID" and clean(c.text): return clean(c.text)
+              return None
+          def scan_dispatchlist(xml):
+              root=ET.fromstring(xml); seen=[]
+              for e in root.iter():
+                  if lname(e.tag)=="DISPATCH":
+                      title=dispatch_title(e); did=dispatch_id(e)
+                      if title or did: seen.append((title,did))
+              return seen
           def latest_log():
-              try:
-                  x,_=get_api({"q":"dispatchlist","dispatchauthor":NATION}); root=ET.fromstring(x)
-                  for e in root.iter():
-                      if lname(e.tag)=="DISPATCH" and clean(e.findtext("TITLE"))==CHANGE_TITLE:
-                          did=e.attrib.get("id") or e.attrib.get("dispatchid")
-                          if did:
-                              text=dispatch_text(did); m=re.search(r"<!-- NOETIVARA_HISTORY_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_HISTORY_END -->",text,re.S)
-                              if m:
+              errors=[]
+              queries=[
+                  {"q":"dispatchlist","dispatchauthor":NATION,"dispatchsort":"new"},
+                  {"q":"dispatchlist","dispatchsort":"new"},
+              ]
+              for idx,params in enumerate(queries,1):
+                  try:
+                      x,_=get_api(params)
+                      items=scan_dispatchlist(x)
+                      print(f"Change Log lookup {idx}: {len(items)} dispatch entries found.")
+                      for title,did in items[:20]:
+                          if title==CHANGE_TITLE and did:
+                              print(f"Change Log Dispatch found via lookup {idx}: {did}")
+                              text=dispatch_text(did)
+                              m=re.search(r"<!-- NOETIVARA_HISTORY_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_HISTORY_END -->",text,re.S)
+                              if not m:
+                                  errors.append(f"Dispatch {did}: history markers not found")
+                                  continue
+                              try:
                                   h=json.loads(m.group(1).strip())
-                                  if isinstance(h,list) and h: return h[0]
-              except Exception as e: print(f"Change Log context warning: {e}")
+                              except Exception as e:
+                                  errors.append(f"Dispatch {did}: invalid history JSON: {e}")
+                                  continue
+                              if isinstance(h,list) and h:
+                                  return h[0]
+                              errors.append(f"Dispatch {did}: history is empty")
+                  except Exception as e:
+                      errors.append(f"lookup {idx}: {type(e).__name__}: {e}")
+              for err in errors[:5]: print(f"Change Log context warning: {err}")
               return None
           def write_dispatch(command,pin):
               prepared,_=post_api({**command,"mode":"prepare"},pin); root=ET.fromstring(prepared); token=None
@@ -110,7 +146,7 @@ jobs:
           try:
               x,_=get_api({"q":"dispatchlist","dispatchauthor":NATION}); dr=ET.fromstring(x)
               for e in dr.iter():
-                  if lname(e.tag)=="DISPATCH" and clean(e.findtext("TITLE"))==TITLE: did=e.attrib.get("id") or e.attrib.get("dispatchid"); break
+                  if lname(e.tag)=="DISPATCH" and dispatch_title(e)==TITLE: did=dispatch_id(e); break
           except Exception as e: print(f"Dispatch一覧取得エラー: {e}")
           command={"nation":NATION,"c":"dispatch","dispatch":"edit" if did else "add","title":TITLE,"text":body,"category":"1","subcategory":"105"};
           if did: command["dispatchid"]=str(did)
