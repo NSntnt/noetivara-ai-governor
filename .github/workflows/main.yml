@@ -3,9 +3,12 @@ name: Noetivara AI Governor
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"
+    # GitHub Actionsの混雑しやすい毎時0分付近を避ける
+    # UTC: 02, 07, 12, 17, 22, 27, 32, 37, 42, 47, 52, 57分
+    # 日本時間(JST): 11, 16, 21, 26, 31, 36, 41, 46, 51, 56分 と翌日0, 1分
+    - cron: "2-59/5 * * * *"
 
-# 同じ国家について複数のWorkflowが同時に動かないようにする
+# 同じNoetivaraについて複数のWorkflowが同時に動かないようにする
 concurrency:
   group: noetivara-governor
   cancel-in-progress: false
@@ -83,7 +86,7 @@ jobs:
 
                   xml_text = response.read().decode("utf-8")
 
-                  # 最初の認証で返されたPINを取得
+                  # 最初の認証で取得したX-Pinを保存
                   NS_PIN = response.headers.get("X-Pin")
 
           except urllib.error.HTTPError as e:
@@ -215,7 +218,8 @@ jobs:
           6. 選択肢IDを変更しない。
           7. WARNINGを必ず考慮する。
           8. 判断理由は簡潔かつ具体的にする。
-          9. NationStatesのゲーム内効果を知らない場合、数値や効果を捏造しない。
+          9. NationStatesのゲーム内効果を知らない場合、
+             数値や効果を捏造しない。
           10. 自信がない場合はconfidenceを低くする。
 
           【Noetivaraの基本理念】
@@ -262,6 +266,10 @@ jobs:
           WARNING:
           {warning_text}
           """
+
+          # ==========================================================
+          # 6. Strict Structured Output
+          # ==========================================================
 
           schema = {
               "type": "json_schema",
@@ -360,7 +368,7 @@ jobs:
               sys.exit(1)
 
           # ==========================================================
-          # 6. AI結果解析
+          # 7. AI結果解析
           # ==========================================================
 
           try:
@@ -395,7 +403,7 @@ jobs:
           print()
 
           # ==========================================================
-          # 7. 安全検証
+          # 8. 安全検証
           # ==========================================================
 
           if choice not in valid_choices:
@@ -436,8 +444,10 @@ jobs:
               sys.exit(0)
 
           # ==========================================================
-          # 8. NationStatesへ回答
+          # 9. NationStatesへ回答
           # ==========================================================
+
+          print("安全検証を通過しました。")
 
           print(
               f"Issue {issue['id']} に"
@@ -464,7 +474,6 @@ jobs:
           )
 
           try:
-
               with urllib.request.urlopen(
                   answer_request,
                   timeout=60
@@ -499,7 +508,7 @@ jobs:
               sys.exit(1)
 
           # ==========================================================
-          # 9. 結果
+          # 10. 結果
           # ==========================================================
 
           print()
