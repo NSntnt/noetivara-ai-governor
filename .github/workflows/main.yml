@@ -24,10 +24,6 @@ jobs:
           import urllib.error
           import xml.etree.ElementTree as ET
 
-          # ==========================================================
-          # 設定
-          # ==========================================================
-
           NATION = os.environ["NS_NATION"].strip()
           NS_AUTLOGIN = os.environ["NS_AUTLOGIN"].strip()
           GROQ_API_KEY = os.environ["GROQ_API_KEY"].strip()
@@ -38,12 +34,10 @@ jobs:
           )
 
           GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-
-          # 自動回答前の最低信頼度
           MIN_CONFIDENCE = 0.70
 
           # ==========================================================
-          # NationStates: Issue取得
+          # NationStates APIへ最初の認証付きリクエスト
           # ==========================================================
 
           print("NoetivaraのIssueを取得しています...")
@@ -71,7 +65,11 @@ jobs:
                   ns_request,
                   timeout=60
               ) as response:
+
                   xml_text = response.read().decode("utf-8")
+
+                  # ★ 最初の認証で取得したX-Pinを保存
+                  NS_PIN = response.headers.get("X-Pin")
 
           except urllib.error.HTTPError as e:
               print(f"NationStates API Error: HTTP {e.code}")
@@ -86,6 +84,13 @@ jobs:
           except Exception as e:
               print(f"NationStates API Error: {e}")
               sys.exit(1)
+
+          if not NS_PIN:
+              print("X-Pinを取得できませんでした。")
+              print("認証処理を中止します。")
+              sys.exit(1)
+
+          print("NationStates認証成功。X-Pinを取得しました。")
 
           # ==========================================================
           # XML解析
@@ -112,26 +117,24 @@ jobs:
                   option_id = option.attrib.get("id")
                   option_text = (option.text or "").strip()
 
-                  if option_id is None:
-                      continue
+                  if option_id is not None:
+                      options.append({
+                          "id": str(option_id),
+                          "text": option_text,
+                      })
 
-                  options.append({
-                      "id": str(option_id),
-                      "text": option_text,
-                  })
-
-              # WARNINGはIssue全体・選択肢に存在する可能性があるため
-              # XML内から拾ってAIにも伝える
               warnings = []
 
               for warning in issue.findall(".//WARNING"):
                   warning_text = (
                       (warning.text or "").strip()
                   )
+
                   if warning_text:
                       warnings.append(warning_text)
 
               if issue_id and title and text and options:
+
                   issues.append({
                       "id": str(issue_id),
                       "title": title,
@@ -147,7 +150,7 @@ jobs:
               sys.exit(0)
 
           # ==========================================================
-          # 今回は「先頭の1件だけ」
+          # 今回は最初の1件だけ
           # ==========================================================
 
           issue = issues[0]
@@ -171,24 +174,22 @@ jobs:
               warning_text = "なし"
 
           # ==========================================================
-          # Groqへ送るプロンプト
+          # Groq
           # ==========================================================
 
           system_prompt = """
           あなたはNationStates国家「Noetivara」の政策決定AIです。
 
-          【最重要ルール】
-          1. 与えられたIssueと選択肢を正確に読む。
-          2. 選択肢IDは必ず提示されたものから1つだけ選ぶ。
-          3. 入力に存在しない国家、人名、組織、事件を作らない。
-          4. Noetivaraを別の国と混同しない。
-          5. 不明な事実を断定しない。
-          6. 政策判断はNoetivaraの国家方針を優先する。
-          7. WARNINGがある場合は必ず考慮する。
-          8. 理由はIssue本文・選択肢・国家方針に基づいて書く。
+          【絶対ルール】
+          - 与えられたIssueと選択肢を正確に読む。
+          - 選択肢IDは提示されたものから1つだけ選ぶ。
+          - 入力に存在しない国家、人名、組織、事件を作らない。
+          - Noetivaraを別の国と混同しない。
+          - 不明な事実を断定しない。
+          - 国家方針を優先する。
+          - WARNINGがある場合は考慮する。
 
           【Noetivaraの国家方針】
-
           優先順位:
           1. 知性・科学・教育
           2. 個人の権利と自由
@@ -201,15 +202,6 @@ jobs:
           国家理念:
           「自由を尊重し、科学と知性を信頼し、
           長期的に国家全体の利益が最大になる政策を選ぶ。」
-
-          基本方針:
-          - 科学技術・教育を積極的に推進する。
-          - 個人の権利を尊重する。
-          - 長期的利益を短期的利益より重視する。
-          - 社会の安定を維持する。
-          - 経済政策は効率・生産性・持続性を重視する。
-          - 暴力や重大な権利侵害には厳格に対応する。
-          - 外交は原則として平和的・協調的に行う。
           """
 
           user_prompt = f"""
@@ -230,10 +222,6 @@ jobs:
           WARNING:
           {warning_text}
           """
-
-          # ==========================================================
-          # Strict Structured Output
-          # ==========================================================
 
           valid_ids = [
               o["id"]
@@ -299,11 +287,12 @@ jobs:
               GROQ_URL,
               data=request_data,
               headers={
-                  "Authorization": (
-                      f"Bearer {GROQ_API_KEY}"
-                  ),
-                  "Content-Type": "application/json",
-                  "User-Agent": USER_AGENT,
+                  "Authorization":
+                      f"Bearer {GROQ_API_KEY}",
+                  "Content-Type":
+                      "application/json",
+                  "User-Agent":
+                      USER_AGENT,
               },
               method="POST",
           )
@@ -335,7 +324,7 @@ jobs:
               sys.exit(1)
 
           # ==========================================================
-          # AI結果解析
+          # AI結果
           # ==========================================================
 
           try:
@@ -346,24 +335,21 @@ jobs:
 
               decision = json.loads(content)
 
-              choice = str(decision["choice"])
-              confidence = float(decision["confidence"])
-              reason = str(decision["reason"])
+              choice = str(
+                  decision["choice"]
+              )
+
+              confidence = float(
+                  decision["confidence"]
+              )
+
+              reason = str(
+                  decision["reason"]
+              )
 
           except Exception as e:
               print(f"AI結果の解析に失敗しました: {e}")
-              print(
-                  json.dumps(
-                      groq_result,
-                      ensure_ascii=False,
-                      indent=2
-                  )
-              )
               sys.exit(1)
-
-          # ==========================================================
-          # 安全検証
-          # ==========================================================
 
           print()
           print("--- AI判断 ---")
@@ -372,27 +358,22 @@ jobs:
           print(f"理由: {reason}")
           print()
 
-          if choice not in valid_ids:
-              print(
-                  f"エラー: 選択肢 {choice} は存在しません。"
-              )
-              print("回答を中止します。")
-              sys.exit(1)
+          # ==========================================================
+          # 安全チェック
+          # ==========================================================
 
-          if not 0 <= confidence <= 1:
-              print("エラー: 確信度が不正です。")
-              print("回答を中止します。")
+          if choice not in valid_ids:
+              print("存在しない選択肢なので中止します。")
               sys.exit(1)
 
           if confidence < MIN_CONFIDENCE:
               print(
-                  f"確信度が基準値 {MIN_CONFIDENCE:.2f} 未満です。"
+                  f"確信度が{MIN_CONFIDENCE:.2f}未満なので保留します。"
               )
-              print("安全のため、このIssueは保留します。")
               sys.exit(0)
 
           # ==========================================================
-          # ★ NationStatesへ実際に回答
+          # ★ 重要：ここではX-Pinを使う
           # ==========================================================
 
           print("安全検証を通過しました。")
@@ -401,7 +382,7 @@ jobs:
               f"選択肢 {choice} を送信します..."
           )
 
-          answer_params = urllib.parse.urlencode({
+          answer_data = urllib.parse.urlencode({
               "nation": NATION,
               "c": "issue",
               "issue": issue["id"],
@@ -410,13 +391,12 @@ jobs:
 
           answer_request = urllib.request.Request(
               "https://www.nationstates.net/cgi-bin/api.cgi",
-              data=answer_params,
+              data=answer_data,
               headers={
                   "User-Agent": USER_AGENT,
-                  "X-Autologin": NS_AUTLOGIN,
-                  "Content-Type": (
-                      "application/x-www-form-urlencoded"
-                  ),
+                  "X-Pin": NS_PIN,
+                  "Content-Type":
+                      "application/x-www-form-urlencoded",
               },
               method="POST",
           )
@@ -449,10 +429,6 @@ jobs:
                   f"NationStates回答エラー: {e}"
               )
               sys.exit(1)
-
-          # ==========================================================
-          # 結果確認
-          # ==========================================================
 
           print()
           print("=" * 80)
