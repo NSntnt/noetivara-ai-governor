@@ -71,7 +71,7 @@ jobs:
               issue_url,
               headers={
                   "User-Agent": USER_AGENT,
-                  "X-Autologin": NS_AUTologin,
+                  "X-Autologin": NS_AUTLOGIN,
               },
           )
 
