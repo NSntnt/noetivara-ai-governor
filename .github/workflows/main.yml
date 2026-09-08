@@ -23,7 +23,7 @@ jobs:
           import xml.etree.ElementTree as ET
 
           nation = os.environ["NS_NATION"]
-          ns_auth = os.environ["NS_AUTLOGIN"]
+          ns_auth = os.environ["NS_AUTLOGIN"].strip()
           groq_key = os.environ["GROQ_API_KEY"]
 
           user_agent = "Noetivara-AI-Governor/1.0 (personal project)"
