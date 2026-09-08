@@ -27,8 +27,10 @@ jobs:
                   "content": "日本語で「Groq接続成功」とだけ答えてください。"
                 }
               ],
+              "reasoning_effort": "low",
+              "include_reasoning": false,
               "temperature": 0,
-              "max_completion_tokens": 20
+              "max_completion_tokens": 100
             }')
 
           echo "$response"
