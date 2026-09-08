@@ -125,15 +125,25 @@ jobs:
           except Exception as e: print(f"Previous log warning: {e}")
 
           prev=None; history=[]
-          sm=re.search(r"<!-- NOETIVARA_STATE_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_STATE_END -->",previous,re.S)
-          hm=re.search(r"<!-- NOETIVARA_HISTORY_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_HISTORY_END -->",previous,re.S)
-          if sm:
-              try: prev=json.loads(sm.group(1).strip())
-              except Exception: pass
-          if hm:
-              try:
-                  x=json.loads(hm.group(1).strip()); history=x if isinstance(x,list) else []
-              except Exception: pass
+          state_patterns=[
+              r"<!-- NOETIVARA_STATE_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_STATE_END -->",
+              r"NOETIVARA_STATE_BEGIN\s*(.*?)\s*NOETIVARA_STATE_END"
+          ]
+          history_patterns=[
+              r"<!-- NOETIVARA_HISTORY_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_HISTORY_END -->",
+              r"NOETIVARA_HISTORY_BEGIN\s*(.*?)\s*NOETIVARA_HISTORY_END"
+          ]
+          for pattern in state_patterns:
+              m=re.search(pattern,previous,re.S)
+              if m:
+                  try: prev=json.loads(m.group(1).strip()); break
+                  except Exception: pass
+          for pattern in history_patterns:
+              m=re.search(pattern,previous,re.S)
+              if m:
+                  try:
+                      x=json.loads(m.group(1).strip()); history=x if isinstance(x,list) else []; break
+                  except Exception: pass
           history=history[:MAX_HISTORY]
 
           changes=[]
@@ -168,7 +178,7 @@ jobs:
           for c in changes[:12]:
               lines.append(f"- {c['field']}: {json.dumps(c.get('old'),ensure_ascii=False)} → {json.dumps(c.get('new'),ensure_ascii=False)}")
           lines += ["","[b]今後の監視方針[/b]"]+[f"- {x}" for x in (entry["recommendations"] or ["継続監視"])]
-          lines += ["","[b]安全上の方針[/b]","公開APIデータの監視・差分記録・自国Dispatch更新のみを行います。","他国への接触、RMB/forum投稿、Telegram、Endorse、地域操作、World Assemblyへの投票・提案・承認等は自動実行しません。","","[i]Automatically maintained by Noetivara AI Governor.[/i]","","<!-- NOETIVARA_STATE_BEGIN -->",json.dumps(current,ensure_ascii=False,separators=(",",":")),"<!-- NOETIVARA_STATE_END -->","<!-- NOETIVARA_HISTORY_BEGIN -->",json.dumps(history,ensure_ascii=False,separators=(",",":")),"<!-- NOETIVARA_HISTORY_END -->"]
+          lines += ["","[b]安全上の方針[/b]","公開APIデータの監視・差分記録・自国Dispatch更新のみを行います。","他国への接触、RMB/forum投稿、Telegram、Endorse、地域操作、World Assemblyへの投票・提案・承認等は自動実行しません。","","[i]Automatically maintained by Noetivara AI Governor.[/i]","","NOETIVARA_STATE_BEGIN",json.dumps(current,ensure_ascii=False,separators=(",",":")),"NOETIVARA_STATE_END","NOETIVARA_HISTORY_BEGIN",json.dumps(history,ensure_ascii=False,separators=(",",":")),"NOETIVARA_HISTORY_END"]
           body="\n".join(lines)
           if len(body)>12000: print("Dispatch body too large; stopping safely."); sys.exit(1)
 
