@@ -103,18 +103,10 @@ jobs:
               joined = " | ".join(parts)
               return joined[:max_chars]
 
-          def find_children(root, wanted):
-              wanted = {w.upper() for w in wanted}
-              return [e for e in root.iter() if local_name(e.tag) in wanted]
-
           print("========================================")
           print("Noetivara Government Council")
           print("========================================")
 
-          # ----------------------------------------------------------
-          # 1. Authenticate once. Only X-Autologin and the returned PIN
-          #    are used. The credentials are never printed.
-          # ----------------------------------------------------------
           print("NationStatesへ接続しています...")
           try:
               _, auth_headers = get_xml(
@@ -134,10 +126,6 @@ jobs:
               print("X-Pinを取得できませんでした。")
               sys.exit(1)
 
-          # ----------------------------------------------------------
-          # 2. Public national data: policy, economy, WA membership,
-          #    recent events and other current indicators.
-          # ----------------------------------------------------------
           nation_q = "+".join([
               "name", "motto", "currency", "govt", "govtdesc", "govtpriority",
               "population", "gdp", "income", "tax", "freedom", "policies",
@@ -156,8 +144,6 @@ jobs:
               print(f"国家データXML解析エラー: {e}")
               sys.exit(1)
 
-          # Keep facts structured but bounded so external content cannot
-          # consume the whole model context.
           nation_facts = []
           for elem in list(nation_root):
               text = compact_element(elem)
@@ -165,10 +151,6 @@ jobs:
                   nation_facts.append(text)
           nation_facts = nation_facts[:120]
 
-          # ----------------------------------------------------------
-          # 3. Region-level public data. The region name is taken from
-          #    the API result, not hardcoded.
-          # ----------------------------------------------------------
           region_name = ""
           for elem in nation_root.iter():
               if local_name(elem.tag) == "REGION" and clean_text(elem.text):
@@ -191,12 +173,6 @@ jobs:
               except Exception as e:
                   print(f"地域データ取得エラー: {e}")
 
-          # ----------------------------------------------------------
-          # 4. World Assembly monitoring.
-          #    Since July 2026, modern GA is council 3; SC is 2.
-          #    We only READ these public shards. No votes, adoptions or
-          #    proposals are made by this workflow.
-          # ----------------------------------------------------------
           wa_facts = []
           for council_id, council_name in [("3", "General Assembly"), ("2", "Security Council")]:
               try:
@@ -216,10 +192,6 @@ jobs:
               except Exception as e:
                   wa_facts.append(f"WA取得失敗 {council_name}: {e}")
 
-          # ----------------------------------------------------------
-          # 5. Recent own-nation and region happenings, restricted to
-          #    public information useful for diplomacy/security context.
-          # ----------------------------------------------------------
           happening_facts = []
           try:
               q = urllib.parse.urlencode({
@@ -229,7 +201,6 @@ jobs:
                   "v": API_VERSION,
               })
               url = f"{NS_API}?{q}"
-              txt, _ = get_xml({}, {}) if False else (None, None)
               req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
               with urllib.request.urlopen(req, timeout=60) as response:
                   own_h = response.read().decode("utf-8")
@@ -267,10 +238,6 @@ jobs:
               except Exception as e:
                   print(f"地域Happenings取得エラー: {e}")
 
-          # ----------------------------------------------------------
-          # 6. Ask the AI to produce a policy/diplomacy/WA/economy
-          #    assessment. External data is explicitly untrusted.
-          # ----------------------------------------------------------
           system_prompt = """
           あなたはNationStates国家「Noetivara」の政府中枢AIです。
 
@@ -436,10 +403,6 @@ jobs:
           if len(body) > 12000:
               body = body[:11950] + "\n[truncated]"
 
-          # ----------------------------------------------------------
-          # 7. Find exactly our Dispatch using the public World API,
-          #    then create/edit only that Dispatch.
-          # ----------------------------------------------------------
           dispatch_id = None
           try:
               dispatch_xml, _ = get_xml({
@@ -480,7 +443,6 @@ jobs:
                   "subcategory": DISPATCH_SUBCATEGORY,
               }
 
-          # Dispatch is a Private Command and must use prepare -> execute.
           try:
               prepare_xml, _ = post_xml({**command, "mode": "prepare"}, ("X-Pin", ns_pin))
               prepare_root = ET.fromstring(prepare_xml)
@@ -494,11 +456,11 @@ jobs:
 
           token = None
           for elem in prepare_root.iter():
-              if local_name(elem.tag) == "TOKEN" and clean_text(elem.text):
+              if local_name(elem.tag) in {"TOKEN", "SUCCESS"} and clean_text(elem.text):
                   token = clean_text(elem.text)
                   break
           if not token:
-              print("Dispatch prepareでtokenを取得できませんでした。")
+              print("Dispatch prepareで実行用tokenを取得できませんでした。")
               print(prepare_xml)
               sys.exit(1)
 
