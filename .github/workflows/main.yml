@@ -1,36 +1,201 @@
-name: Groq Connection Test
+name: Noetivara Issue Analysis
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-groq:
+  analyze:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Groq API
+      - name: Analyze current Noetivara issues
         env:
+          NS_AUTLOGIN: ${{ secrets.NS_AUTLOGIN }}
+          NS_NATION: ${{ secrets.NS_NATION }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          response=$(curl -sS \
-            -w '\nHTTP_STATUS:%{http_code}' \
-            -A 'Noetivara-AI-Governor/1.0' \
-            -H "Authorization: Bearer ${GROQ_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -X POST \
-            https://api.groq.com/openai/v1/chat/completions \
-            -d '{
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.parse
+          import urllib.request
+          import xml.etree.ElementTree as ET
+
+          nation = os.environ["NS_NATION"]
+          ns_auth = os.environ["NS_AUTLOGIN"]
+          groq_key = os.environ["GROQ_API_KEY"]
+
+          user_agent = "Noetivara-AI-Governor/1.0 (personal project)"
+
+          # ----------------------------
+          # 1. NationStatesからIssue取得
+          # ----------------------------
+          params = urllib.parse.urlencode({
+              "nation": nation,
+              "q": "issues",
+          })
+
+          ns_url = f"https://www.nationstates.net/cgi-bin/api.cgi?{params}"
+
+          ns_req = urllib.request.Request(
+              ns_url,
+              headers={
+                  "User-Agent": user_agent,
+                  "X-Autologin": ns_auth,
+              },
+          )
+
+          with urllib.request.urlopen(ns_req, timeout=60) as response:
+              xml_text = response.read().decode("utf-8")
+
+          root = ET.fromstring(xml_text)
+
+          issues = []
+
+          for issue in root.findall(".//ISSUE"):
+              issue_id = issue.attrib.get("id")
+              title = (issue.findtext("TITLE") or "").strip()
+              text = (issue.findtext("TEXT") or "").strip()
+
+              options = []
+
+              for option in issue.findall("OPTION"):
+                  option_id = option.attrib.get("id")
+                  option_text = (option.text or "").strip()
+
+                  if option_id is not None:
+                      options.append({
+                          "id": option_id,
+                          "text": option_text,
+                      })
+
+              if issue_id and title and text and options:
+                  issues.append({
+                      "id": issue_id,
+                      "title": title,
+                      "text": text,
+                      "options": options,
+                  })
+
+          print(f"取得したIssue数: {len(issues)}")
+
+          if not issues:
+              print("現在Issueはありません。")
+              sys.exit(0)
+
+          # ----------------------------
+          # 2. 最初のIssueだけAI分析
+          # ----------------------------
+          issue = issues[0]
+
+          options_text = "\n".join(
+              f'[{o["id"]}] {o["text"]}'
+              for o in issue["options"]
+          )
+
+          system_prompt = """
+          あなたはNationStates国家「Noetivara」の政策判断AIです。
+
+          厳守事項:
+          - 与えられたIssue本文と選択肢だけを根拠にする。
+          - 入力に存在しない国家、人名、組織、出来事を追加しない。
+          - 事実を捏造しない。
+          - 提示された選択肢から1つだけ選ぶ。
+          - 国家名はNoetivara。
+          - 判断理由は簡潔にする。
+
+          Noetivaraの基本方針:
+          - 知性と合理性を重視
+          - 長期的利益を重視
+          - 個人の権利と社会の安定を両立
+          - 倫理性と実効性を重視
+          """
+
+          user_prompt = f"""
+          次のNationStates Issueを判断してください。
+
+          Issue ID: {issue["id"]}
+          タイトル: {issue["title"]}
+
+          本文:
+          {issue["text"]}
+
+          選択肢:
+          {options_text}
+          """
+
+          schema = {
+              "type": "json_schema",
+              "json_schema": {
+                  "name": "nationstates_decision",
+                  "strict": True,
+                  "schema": {
+                      "type": "object",
+                      "properties": {
+                          "choice": {
+                              "type": "string",
+                              "enum": [o["id"] for o in issue["options"]],
+                          },
+                          "reason": {
+                              "type": "string",
+                          },
+                      },
+                      "required": ["choice", "reason"],
+                      "additionalProperties": False,
+                  },
+              },
+          }
+
+          payload = {
               "model": "openai/gpt-oss-20b",
               "messages": [
-                {
-                  "role": "user",
-                  "content": "日本語で「Groq接続成功」とだけ答えてください。"
-                }
+                  {
+                      "role": "system",
+                      "content": system_prompt,
+                  },
+                  {
+                      "role": "user",
+                      "content": user_prompt,
+                  },
               ],
               "reasoning_effort": "low",
-              "include_reasoning": false,
+              "include_reasoning": False,
               "temperature": 0,
-              "max_completion_tokens": 100
-            }')
+              "max_completion_tokens": 300,
+              "response_format": schema,
+          }
 
-          echo "$response"
+          data = json.dumps(payload).encode("utf-8")
+
+          groq_req = urllib.request.Request(
+              "https://api.groq.com/openai/v1/chat/completions",
+              data=data,
+              headers={
+                  "Authorization": f"Bearer {groq_key}",
+                  "Content-Type": "application/json",
+                  "User-Agent": user_agent,
+              },
+              method="POST",
+          )
+
+          with urllib.request.urlopen(groq_req, timeout=120) as response:
+              result = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          content = result["choices"][0]["message"]["content"]
+          decision = json.loads(content)
+
+          # ----------------------------
+          # 3. 結果表示のみ
+          # ----------------------------
+          print("")
+          print("=" * 70)
+          print(f'Issue {issue["id"]}: {issue["title"]}')
+          print("=" * 70)
+          print(f'AI選択: {decision["choice"]}')
+          print(f'理由: {decision["reason"]}')
+          print("")
+          print("※ このテストではNationStatesへの回答は実行していません。")
+          PY
