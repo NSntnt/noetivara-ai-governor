@@ -12,38 +12,23 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          api_key = os.environ["GROQ_API_KEY"]
-
-          data = json.dumps({
+          response=$(curl -sS \
+            -w '\nHTTP_STATUS:%{http_code}' \
+            -A 'Noetivara-AI-Governor/1.0' \
+            -H "Authorization: Bearer ${GROQ_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            https://api.groq.com/openai/v1/chat/completions \
+            -d '{
               "model": "openai/gpt-oss-20b",
               "messages": [
-                  {
-                      "role": "user",
-                      "content": "日本語で「Groq接続成功」とだけ答えてください。"
-                  }
+                {
+                  "role": "user",
+                  "content": "日本語で「Groq接続成功」とだけ答えてください。"
+                }
               ],
               "temperature": 0,
-              "max_tokens": 20
-          }).encode("utf-8")
+              "max_completion_tokens": 20
+            }')
 
-          request = urllib.request.Request(
-              "https://api.groq.com/openai/v1/chat/completions",
-              data=data,
-              headers={
-                  "Authorization": f"Bearer {api_key}",
-                  "Content-Type": "application/json",
-              },
-              method="POST",
-          )
-
-          with urllib.request.urlopen(request, timeout=60) as response:
-              result = json.loads(response.read().decode("utf-8"))
-
-          print("AI response:")
-          print(result["choices"][0]["message"]["content"])
-          PY
+          echo "$response"
