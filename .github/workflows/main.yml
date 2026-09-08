@@ -8,11 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Analyze current Noetivara issues
+      - name: Analyze all current issues
         env:
           NS_AUTLOGIN: ${{ secrets.NS_AUTLOGIN }}
           NS_NATION: ${{ secrets.NS_NATION }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
         run: |
           python - <<'PY'
           import json
@@ -20,36 +21,58 @@ jobs:
           import sys
           import urllib.parse
           import urllib.request
+          import urllib.error
           import xml.etree.ElementTree as ET
 
-          nation = os.environ["NS_NATION"]
-          ns_auth = os.environ["NS_AUTLOGIN"].strip()
-          groq_key = os.environ["GROQ_API_KEY"]
+          NATION = os.environ["NS_NATION"].strip()
+          NS_AUTLOGIN = os.environ["NS_AUTLOGIN"].strip()
+          GROQ_API_KEY = os.environ["GROQ_API_KEY"].strip()
 
-          user_agent = "Noetivara-AI-Governor/1.0 (personal project)"
+          USER_AGENT = "Noetivara-AI-Governor/1.0 (personal project)"
+          GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-          # ----------------------------
-          # 1. NationStatesからIssue取得
-          # ----------------------------
+          # ============================================================
+          # NationStatesからIssue取得
+          # ============================================================
+
           params = urllib.parse.urlencode({
-              "nation": nation,
+              "nation": NATION,
               "q": "issues",
           })
 
           ns_url = f"https://www.nationstates.net/cgi-bin/api.cgi?{params}"
 
-          ns_req = urllib.request.Request(
+          ns_request = urllib.request.Request(
               ns_url,
               headers={
-                  "User-Agent": user_agent,
-                  "X-Autologin": ns_auth,
+                  "User-Agent": USER_AGENT,
+                  "X-Autologin": NS_AUTLOGIN,
               },
           )
 
-          with urllib.request.urlopen(ns_req, timeout=60) as response:
-              xml_text = response.read().decode("utf-8")
+          try:
+              with urllib.request.urlopen(ns_request, timeout=60) as response:
+                  xml_text = response.read().decode("utf-8")
 
-          root = ET.fromstring(xml_text)
+          except urllib.error.HTTPError as e:
+              print(f"NationStates API HTTP Error: {e.code}")
+              print(e.read().decode("utf-8", errors="replace"))
+              sys.exit(1)
+
+          except Exception as e:
+              print(f"NationStates API Error: {e}")
+              sys.exit(1)
+
+          # ============================================================
+          # XML解析
+          # ============================================================
+
+          try:
+              root = ET.fromstring(xml_text)
+
+          except ET.ParseError as e:
+              print(f"XML解析エラー: {e}")
+              sys.exit(1)
 
           issues = []
 
@@ -66,57 +89,74 @@ jobs:
 
                   if option_id is not None:
                       options.append({
-                          "id": option_id,
+                          "id": str(option_id),
                           "text": option_text,
                       })
 
               if issue_id and title and text and options:
                   issues.append({
-                      "id": issue_id,
+                      "id": str(issue_id),
                       "title": title,
                       "text": text,
                       "options": options,
                   })
 
           print(f"取得したIssue数: {len(issues)}")
+          print()
 
           if not issues:
               print("現在Issueはありません。")
               sys.exit(0)
 
-          # ----------------------------
-          # 2. 最初のIssueだけAI分析
-          # ----------------------------
-          issue = issues[0]
+          # ============================================================
+          # Issueを1件ずつAIに判断させる
+          # ============================================================
 
-          options_text = "\n".join(
-              f'[{o["id"]}] {o["text"]}'
-              for o in issue["options"]
-          )
+          for number, issue in enumerate(issues, start=1):
 
-          system_prompt = """
+              print("=" * 80)
+              print(f"[{number}/{len(issues)}] Issue {issue['id']}: {issue['title']}")
+              print("=" * 80)
+
+              options_text = "\n".join(
+                  f'[{o["id"]}] {o["text"]}'
+                  for o in issue["options"]
+              )
+
+              valid_choices = [o["id"] for o in issue["options"]]
+
+              system_prompt = """
           あなたはNationStates国家「Noetivara」の政策判断AIです。
 
-          厳守事項:
-          - 与えられたIssue本文と選択肢だけを根拠にする。
-          - 入力に存在しない国家、人名、組織、出来事を追加しない。
-          - 事実を捏造しない。
-          - 提示された選択肢から1つだけ選ぶ。
+          【絶対ルール】
+          - 与えられたIssue本文と選択肢だけを根拠に判断する。
+          - 入力にない事実を作らない。
+          - 入力にない国家、人名、組織、事件を追加しない。
+          - 他国とNoetivaraを混同しない。
           - 国家名はNoetivara。
-          - 判断理由は簡潔にする。
+          - 必ず提示された選択肢の中から1つだけ選ぶ。
+          - 選択肢IDを変更しない。
+          - 理由はIssue本文と選択肢に基づいて簡潔に書く。
 
-          Noetivaraの基本方針:
+          【Noetivaraの基本方針】
           - 知性と合理性を重視
-          - 長期的利益を重視
+          - 長期的な利益を重視
           - 個人の権利と社会の安定を両立
           - 倫理性と実効性を重視
+          - 科学・教育・技術の発展を重視
+
+          NationStatesに存在する具体的なゲーム効果を知らない場合、
+          勝手に数値や効果を作らず、Issue本文だけを根拠に判断する。
           """
 
-          user_prompt = f"""
-          次のNationStates Issueを判断してください。
+              user_prompt = f"""
+          次のIssueについて、Noetivaraとして最も適切な選択肢を1つ選んでください。
 
-          Issue ID: {issue["id"]}
-          タイトル: {issue["title"]}
+          Issue ID:
+          {issue["id"]}
+
+          タイトル:
+          {issue["title"]}
 
           本文:
           {issue["text"]}
@@ -125,77 +165,120 @@ jobs:
           {options_text}
           """
 
-          schema = {
-              "type": "json_schema",
-              "json_schema": {
-                  "name": "nationstates_decision",
-                  "strict": True,
-                  "schema": {
-                      "type": "object",
-                      "properties": {
-                          "choice": {
-                              "type": "string",
-                              "enum": [o["id"] for o in issue["options"]],
+              schema = {
+                  "type": "json_schema",
+                  "json_schema": {
+                      "name": "noetivara_issue_decision",
+                      "strict": True,
+                      "schema": {
+                          "type": "object",
+                          "properties": {
+                              "choice": {
+                                  "type": "string",
+                                  "enum": valid_choices,
+                              },
+                              "reason": {
+                                  "type": "string",
+                              },
                           },
-                          "reason": {
-                              "type": "string",
-                          },
+                          "required": [
+                              "choice",
+                              "reason"
+                          ],
+                          "additionalProperties": False,
                       },
-                      "required": ["choice", "reason"],
-                      "additionalProperties": False,
                   },
-              },
-          }
+              }
 
-          payload = {
-              "model": "openai/gpt-oss-20b",
-              "messages": [
-                  {
-                      "role": "system",
-                      "content": system_prompt,
+              payload = {
+                  "model": "openai/gpt-oss-20b",
+                  "messages": [
+                      {
+                          "role": "system",
+                          "content": system_prompt,
+                      },
+                      {
+                          "role": "user",
+                          "content": user_prompt,
+                      },
+                  ],
+                  "reasoning_effort": "low",
+                  "include_reasoning": False,
+                  "temperature": 0,
+                  "max_completion_tokens": 500,
+                  "response_format": schema,
+              }
+
+              request_data = json.dumps(
+                  payload,
+                  ensure_ascii=False
+              ).encode("utf-8")
+
+              groq_request = urllib.request.Request(
+                  GROQ_URL,
+                  data=request_data,
+                  headers={
+                      "Authorization": f"Bearer {GROQ_API_KEY}",
+                      "Content-Type": "application/json",
+                      "User-Agent": USER_AGENT,
                   },
-                  {
-                      "role": "user",
-                      "content": user_prompt,
-                  },
-              ],
-              "reasoning_effort": "low",
-              "include_reasoning": False,
-              "temperature": 0,
-              "max_completion_tokens": 300,
-              "response_format": schema,
-          }
-
-          data = json.dumps(payload).encode("utf-8")
-
-          groq_req = urllib.request.Request(
-              "https://api.groq.com/openai/v1/chat/completions",
-              data=data,
-              headers={
-                  "Authorization": f"Bearer {groq_key}",
-                  "Content-Type": "application/json",
-                  "User-Agent": user_agent,
-              },
-              method="POST",
-          )
-
-          with urllib.request.urlopen(groq_req, timeout=120) as response:
-              result = json.loads(
-                  response.read().decode("utf-8")
+                  method="POST",
               )
 
-          content = result["choices"][0]["message"]["content"]
-          decision = json.loads(content)
+              try:
+                  with urllib.request.urlopen(
+                      groq_request,
+                      timeout=120
+                  ) as response:
+                      result = json.loads(
+                          response.read().decode("utf-8")
+                      )
 
-          # ----------------------------
-          # 3. 結果表示のみ
-          # ----------------------------
-          print("")
-          print("=" * 70)
-          print(f'Issue {issue["id"]}: {issue["title"]}')
-          print("=" * 70)
-          print(f'AI選択: {decision["choice"]}')
-          print(f'理由: {decision["reason"]}')
-          print("")
-          print("※ このテストではNationStatesへの回答は実行していません。")
+              except urllib.error.HTTPError as e:
+                  print(f"Groq API HTTP Error: {e.code}")
+                  print(
+                      e.read().decode(
+                          "utf-8",
+                          errors="replace"
+                      )
+                  )
+                  print("このIssueは保留します。")
+                  continue
+
+              except Exception as e:
+                  print(f"Groq API Error: {e}")
+                  print("このIssueは保留します。")
+                  continue
+
+              try:
+                  content = result["choices"][0]["message"]["content"]
+                  decision = json.loads(content)
+
+                  choice = str(decision["choice"])
+                  reason = str(decision["reason"])
+
+              except Exception as e:
+                  print(f"AI結果の解析エラー: {e}")
+                  print("生データ:")
+                  print(json.dumps(result, ensure_ascii=False, indent=2))
+                  print("このIssueは保留します。")
+                  continue
+
+              # ========================================================
+              # 安全検証
+              # ========================================================
+
+              if choice not in valid_choices:
+                  print(f"無効な選択肢です: {choice}")
+                  print("このIssueは保留します。")
+                  continue
+
+              print(f"AI選択: {choice}")
+              print(f"理由: {reason}")
+              print()
+
+          print("=" * 80)
+          print("全IssueのAI分析が終了しました。")
+          print("このWorkflowではNationStatesへの書き込みは一切行っていません。")
+          print("=" * 80)
           PY
