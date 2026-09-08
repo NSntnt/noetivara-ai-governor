@@ -2,13 +2,20 @@ name: Noetivara AI Governor
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+# 同じ国家について複数のWorkflowが同時に動かないようにする
+concurrency:
+  group: noetivara-governor
+  cancel-in-progress: false
 
 jobs:
   govern:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Run Noetivara governor
+      - name: Run Noetivara AI Governor
         env:
           NS_AUTLOGIN: ${{ secrets.NS_AUTLOGIN }}
           NS_NATION: ${{ secrets.NS_NATION }}
@@ -24,6 +31,10 @@ jobs:
           import urllib.error
           import xml.etree.ElementTree as ET
 
+          # ==========================================================
+          # 設定
+          # ==========================================================
+
           NATION = os.environ["NS_NATION"].strip()
           NS_AUTLOGIN = os.environ["NS_AUTLOGIN"].strip()
           GROQ_API_KEY = os.environ["GROQ_API_KEY"].strip()
@@ -33,42 +44,46 @@ jobs:
               "(personal NationStates automation project)"
           )
 
-          GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+          NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
+          GROQ_API = "https://api.groq.com/openai/v1/chat/completions"
+
+          # この値未満なら安全のため回答しない
           MIN_CONFIDENCE = 0.70
 
           # ==========================================================
-          # NationStates APIへ最初の認証付きリクエスト
+          # 1. NationStatesへ認証してIssue取得
           # ==========================================================
 
-          print("NoetivaraのIssueを取得しています...")
+          print("========================================")
+          print("Noetivara AI Governor")
+          print("========================================")
+          print()
+          print("NationStatesへ接続しています...")
 
-          ns_params = urllib.parse.urlencode({
+          issue_params = urllib.parse.urlencode({
               "nation": NATION,
               "q": "issues",
           })
 
-          ns_url = (
-              "https://www.nationstates.net/cgi-bin/api.cgi?"
-              + ns_params
-          )
+          issue_url = f"{NS_API}?{issue_params}"
 
-          ns_request = urllib.request.Request(
-              ns_url,
+          issue_request = urllib.request.Request(
+              issue_url,
               headers={
                   "User-Agent": USER_AGENT,
-                  "X-Autologin": NS_AUTLOGIN,
+                  "X-Autologin": NS_AUTologin,
               },
           )
 
           try:
               with urllib.request.urlopen(
-                  ns_request,
+                  issue_request,
                   timeout=60
               ) as response:
 
                   xml_text = response.read().decode("utf-8")
 
-                  # ★ 最初の認証で取得したX-Pinを保存
+                  # 最初の認証で返されたPINを取得
                   NS_PIN = response.headers.get("X-Pin")
 
           except urllib.error.HTTPError as e:
@@ -82,18 +97,19 @@ jobs:
               sys.exit(1)
 
           except Exception as e:
-              print(f"NationStates API Error: {e}")
+              print(f"NationStates接続エラー: {e}")
               sys.exit(1)
 
           if not NS_PIN:
               print("X-Pinを取得できませんでした。")
-              print("認証処理を中止します。")
+              print("今回は安全のため処理を中止します。")
               sys.exit(1)
 
-          print("NationStates認証成功。X-Pinを取得しました。")
+          print("NationStates認証成功。")
+          print("X-Pin取得成功。")
 
           # ==========================================================
-          # XML解析
+          # 2. XML解析
           # ==========================================================
 
           try:
@@ -126,9 +142,8 @@ jobs:
               warnings = []
 
               for warning in issue.findall(".//WARNING"):
-                  warning_text = (
-                      (warning.text or "").strip()
-                  )
+
+                  warning_text = (warning.text or "").strip()
 
                   if warning_text:
                       warnings.append(warning_text)
@@ -143,14 +158,19 @@ jobs:
                       "warnings": warnings,
                   })
 
-          print(f"取得したIssue数: {len(issues)}")
+          print(f"現在のIssue数: {len(issues)}")
+
+          # ==========================================================
+          # 3. Issueがなければ終了
+          # ==========================================================
 
           if not issues:
-              print("現在、回答可能なIssueはありません。")
+              print("回答可能なIssueはありません。")
+              print("今回の実行を終了します。")
               sys.exit(0)
 
           # ==========================================================
-          # 今回は最初の1件だけ
+          # 4. 1回の実行では1件だけ処理
           # ==========================================================
 
           issue = issues[0]
@@ -160,37 +180,50 @@ jobs:
           print(f"Issue {issue['id']}: {issue['title']}")
           print("=" * 80)
 
+          valid_choices = [
+              option["id"]
+              for option in issue["options"]
+          ]
+
           options_text = "\n".join(
-              f'[{o["id"]}] {o["text"]}'
-              for o in issue["options"]
+              f'[{option["id"]}] {option["text"]}'
+              for option in issue["options"]
           )
 
           warning_text = "\n".join(
-              f"- {w}"
-              for w in issue["warnings"]
+              f"- {warning}"
+              for warning in issue["warnings"]
           )
 
           if not warning_text:
               warning_text = "なし"
 
           # ==========================================================
-          # Groq
+          # 5. GPT-OSS 20Bへ判断依頼
           # ==========================================================
 
           system_prompt = """
           あなたはNationStates国家「Noetivara」の政策決定AIです。
 
-          【絶対ルール】
-          - 与えられたIssueと選択肢を正確に読む。
-          - 選択肢IDは提示されたものから1つだけ選ぶ。
-          - 入力に存在しない国家、人名、組織、事件を作らない。
-          - Noetivaraを別の国と混同しない。
-          - 不明な事実を断定しない。
-          - 国家方針を優先する。
-          - WARNINGがある場合は考慮する。
+          【最重要ルール】
 
-          【Noetivaraの国家方針】
-          優先順位:
+          1. 与えられたIssue本文・WARNING・選択肢だけを根拠にする。
+          2. 入力に存在しない事実を作らない。
+          3. 入力に存在しない国・人物・組織・事件を作らない。
+          4. Noetivaraを他国と混同しない。
+          5. 必ず提示された選択肢から1つだけ選ぶ。
+          6. 選択肢IDを変更しない。
+          7. WARNINGを必ず考慮する。
+          8. 判断理由は簡潔かつ具体的にする。
+          9. NationStatesのゲーム内効果を知らない場合、数値や効果を捏造しない。
+          10. 自信がない場合はconfidenceを低くする。
+
+          【Noetivaraの基本理念】
+
+          「Intelligence Guides the Future.」
+
+          【国家の優先順位】
+
           1. 知性・科学・教育
           2. 個人の権利と自由
           3. 長期的な社会の安定
@@ -199,13 +232,20 @@ jobs:
           6. 環境
           7. 外交・安全保障
 
-          国家理念:
-          「自由を尊重し、科学と知性を信頼し、
-          長期的に国家全体の利益が最大になる政策を選ぶ。」
+          【政策方針】
+
+          - 科学技術と教育を積極的に推進する。
+          - 個人の権利を尊重する。
+          - 長期的利益を短期的利益より重視する。
+          - 社会の安定を維持する。
+          - 経済は効率・生産性・持続性を重視する。
+          - 暴力や重大な権利侵害には厳格に対応する。
+          - 外交は原則として平和的・協調的に行う。
           """
 
           user_prompt = f"""
-          以下のIssueについて、Noetivaraとしての政策判断を行ってください。
+          次のNationStates Issueについて、
+          Noetivaraとして最も適切な政策を選んでください。
 
           Issue ID:
           {issue["id"]}
@@ -223,11 +263,6 @@ jobs:
           {warning_text}
           """
 
-          valid_ids = [
-              o["id"]
-              for o in issue["options"]
-          ]
-
           schema = {
               "type": "json_schema",
               "json_schema": {
@@ -238,7 +273,7 @@ jobs:
                       "properties": {
                           "choice": {
                               "type": "string",
-                              "enum": valid_ids,
+                              "enum": valid_choices,
                           },
                           "confidence": {
                               "type": "number",
@@ -284,7 +319,7 @@ jobs:
           ).encode("utf-8")
 
           groq_request = urllib.request.Request(
-              GROQ_URL,
+              GROQ_API,
               data=request_data,
               headers={
                   "Authorization":
@@ -297,6 +332,7 @@ jobs:
               method="POST",
           )
 
+          print()
           print("AIが政策判断を行っています...")
 
           try:
@@ -320,11 +356,11 @@ jobs:
               sys.exit(1)
 
           except Exception as e:
-              print(f"Groq API Error: {e}")
+              print(f"Groq接続エラー: {e}")
               sys.exit(1)
 
           # ==========================================================
-          # AI結果
+          # 6. AI結果解析
           # ==========================================================
 
           try:
@@ -359,24 +395,50 @@ jobs:
           print()
 
           # ==========================================================
-          # 安全チェック
+          # 7. 安全検証
           # ==========================================================
 
-          if choice not in valid_ids:
-              print("存在しない選択肢なので中止します。")
+          if choice not in valid_choices:
+
+              print(
+                  f"ERROR: 選択肢 {choice} は存在しません。"
+              )
+
+              print(
+                  "NationStatesへの回答は実行しません。"
+              )
+
+              sys.exit(1)
+
+          if not 0 <= confidence <= 1:
+
+              print(
+                  f"ERROR: 確信度 {confidence} が不正です。"
+              )
+
+              print(
+                  "NationStatesへの回答は実行しません。"
+              )
+
               sys.exit(1)
 
           if confidence < MIN_CONFIDENCE:
+
               print(
-                  f"確信度が{MIN_CONFIDENCE:.2f}未満なので保留します。"
+                  f"確信度 {confidence:.2f} が"
+                  f"基準値 {MIN_CONFIDENCE:.2f} 未満です。"
               )
+
+              print(
+                  "安全のため、このIssueは保留します。"
+              )
+
               sys.exit(0)
 
           # ==========================================================
-          # ★ 重要：ここではX-Pinを使う
+          # 8. NationStatesへ回答
           # ==========================================================
 
-          print("安全検証を通過しました。")
           print(
               f"Issue {issue['id']} に"
               f"選択肢 {choice} を送信します..."
@@ -390,7 +452,7 @@ jobs:
           }).encode("utf-8")
 
           answer_request = urllib.request.Request(
-              "https://www.nationstates.net/cgi-bin/api.cgi",
+              NS_API,
               data=answer_data,
               headers={
                   "User-Agent": USER_AGENT,
@@ -402,6 +464,7 @@ jobs:
           )
 
           try:
+
               with urllib.request.urlopen(
                   answer_request,
                   timeout=60
@@ -413,22 +476,31 @@ jobs:
                   )
 
           except urllib.error.HTTPError as e:
+
               print(
                   f"NationStates回答エラー: HTTP {e.code}"
               )
+
               print(
                   e.read().decode(
                       "utf-8",
                       errors="replace"
                   )
               )
+
               sys.exit(1)
 
           except Exception as e:
+
               print(
                   f"NationStates回答エラー: {e}"
               )
+
               sys.exit(1)
+
+          # ==========================================================
+          # 9. 結果
+          # ==========================================================
 
           print()
           print("=" * 80)
@@ -436,5 +508,11 @@ jobs:
           print("=" * 80)
           print(answer_result)
           print("=" * 80)
-          print("Issueの自動回答が完了しました。")
+          print()
+          print(
+              f"Issue {issue['id']} の自動回答が完了しました。"
+          )
+          print(
+              "次回のWorkflow実行では、残っているIssueを処理します。"
+          )
           PY
