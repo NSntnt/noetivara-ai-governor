@@ -83,18 +83,23 @@ jobs:
                           if title==CHANGE_TITLE and did:
                               print(f"Change Log Dispatch found via lookup {idx}: {did}")
                               text=dispatch_text(did)
-                              m=re.search(r"<!-- NOETIVARA_HISTORY_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_HISTORY_END -->",text,re.S)
-                              if not m:
-                                  errors.append(f"Dispatch {did}: history markers not found")
-                                  continue
-                              try:
-                                  h=json.loads(m.group(1).strip())
-                              except Exception as e:
-                                  errors.append(f"Dispatch {did}: invalid history JSON: {e}")
-                                  continue
-                              if isinstance(h,list) and h:
-                                  return h[0]
-                              errors.append(f"Dispatch {did}: history is empty")
+                              patterns=[
+                                  r"<!-- NOETIVARA_HISTORY_BEGIN -->\s*(.*?)\s*<!-- NOETIVARA_HISTORY_END -->",
+                                  r"NOETIVARA_HISTORY_BEGIN\s*(.*?)\s*NOETIVARA_HISTORY_END"
+                              ]
+                              for pattern in patterns:
+                                  m=re.search(pattern,text,re.S)
+                                  if not m: continue
+                                  try:
+                                      h=json.loads(m.group(1).strip())
+                                  except Exception as e:
+                                      errors.append(f"Dispatch {did}: invalid history JSON: {e}")
+                                      continue
+                                  if isinstance(h,list) and h:
+                                      print(f"Change Log history parsed successfully from Dispatch {did}.")
+                                      return h[0]
+                                  errors.append(f"Dispatch {did}: history is empty")
+                              errors.append(f"Dispatch {did}: history markers not found")
                   except Exception as e:
                       errors.append(f"lookup {idx}: {type(e).__name__}: {e}")
               for err in errors[:5]: print(f"Change Log context warning: {err}")
