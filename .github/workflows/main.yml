@@ -1,17 +1,49 @@
-name: Noetivara AI Governor Test
+name: Groq Connection Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-groq:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check Python
+      - name: Test Groq API
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          python3 --version
-          echo "GitHub Actions is working!"
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          api_key = os.environ["GROQ_API_KEY"]
+
+          data = json.dumps({
+              "model": "openai/gpt-oss-20b",
+              "messages": [
+                  {
+                      "role": "user",
+                      "content": "日本語で「Groq接続成功」とだけ答えてください。"
+                  }
+              ],
+              "temperature": 0,
+              "max_tokens": 20
+          }).encode("utf-8")
+
+          request = urllib.request.Request(
+              "https://api.groq.com/openai/v1/chat/completions",
+              data=data,
+              headers={
+                  "Authorization": f"Bearer {api_key}",
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+
+          with urllib.request.urlopen(request, timeout=60) as response:
+              result = json.loads(response.read().decode("utf-8"))
+
+          print("AI response:")
+          print(result["choices"][0]["message"]["content"])
+          PY
