@@ -12,7 +12,7 @@ AUTLOGIN = os.environ["NS_AUTLOGIN"].strip()
 GROQ = os.environ["GROQ_API_KEY"].strip()
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 GROQ_API = "https://api.groq.com/openai/v1/chat/completions"
-UA = "Noetivara-AI-Governor/1.5 (by:Noetivara; contact:https://github.com/NSntnt/noetivara-ai-governor; usedBy:Noetivara)"
+UA = "Noetivara-AI-Governor/1.6 (by:Noetivara; contact:https://github.com/NSntnt/noetivara-ai-governor; usedBy:Noetivara)"
 V = "13"
 COUNCIL_TITLE = "Noetivara Government Council"
 CHANGE_TITLE = "Noetivara Government Change Log"
@@ -91,10 +91,18 @@ def find_dispatch(xml_text, wanted_title):
 def read_dispatch_text(dispatch_id_value):
     xml_text, _ = get_api({"q": f"dispatch;dispatchid={dispatch_id_value}"})
     root = ET.fromstring(xml_text)
+    candidates = []
     for element in root.iter():
-        if lname(element.tag) == "TEXT":
-            return element.text or ""
-    return ""
+        if lname(element.tag) != "TEXT":
+            continue
+        text = "".join(element.itertext()).strip()
+        if text:
+            candidates.append(text)
+    if not candidates:
+        return ""
+    # Prefer the largest non-empty TEXT block; some API responses may expose
+    # empty/auxiliary TEXT elements before the actual Dispatch body.
+    return max(candidates, key=len)
 
 
 def latest_change_log():
@@ -113,6 +121,7 @@ def latest_change_log():
                 if clean(text):
                     print(f"Change Log raw text loaded from Dispatch {dispatch_id_value}.")
                     return {"dispatch_id": str(dispatch_id_value), "raw_text": text[:9000]}
+                print(f"Change Log Dispatch {dispatch_id_value} returned an empty TEXT field.")
         except Exception as exc:
             print(f"Change Log lookup {index} warning: {type(exc).__name__}: {exc}")
     return None
@@ -307,7 +316,6 @@ lines += [
 ]
 body = "\n".join(lines)[:11950]
 
-# Preserve the existing Council Dispatch when possible.
 council_id = None
 try:
     dispatch_xml, _ = get_api({"q": "dispatchlist", "dispatchauthor": NATION})
