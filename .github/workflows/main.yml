@@ -157,6 +157,19 @@ jobs:
               with urllib.request.urlopen(req,timeout=120) as r: result=json.loads(r.read().decode())
           except Exception as e:
               print(f"Groq接続エラー: {e}"); sys.exit(1)
+
+          usage=result.get("usage",{}) or {}
+          output_details=usage.get("output_tokens_details",{}) or {}
+          input_details=usage.get("input_tokens_details",{}) or {}
+          print("----------------------------------------")
+          print("Groq Token Usage")
+          print(f"Input tokens: {usage.get('input_tokens','unknown')}")
+          print(f"Output tokens: {usage.get('output_tokens','unknown')}")
+          print(f"Reasoning tokens: {output_details.get('reasoning_tokens','unknown')}")
+          print(f"Cached input tokens: {input_details.get('cached_tokens','unknown')}")
+          print(f"Total tokens: {usage.get('total_tokens','unknown')}")
+          print("----------------------------------------")
+
           try:
               decision=json.loads(result["choices"][0]["message"]["content"])
               choice=str(decision["choice"]); confidence=float(decision["confidence"]); reason=str(decision["reason"])
