@@ -1,0 +1,26 @@
+name: Noetivara National Trend Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 0,6,12,18 * * *"
+
+permissions: {}
+
+concurrency:
+  group: noetivara-national-trend-monitor
+  cancel-in-progress: false
+
+jobs:
+  trend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Run National Trend Monitor
+        env:
+          NS_AUTLOGIN: ${{ secrets.NS_AUTLOGIN }}
+          NS_NATION: ${{ secrets.NS_NATION }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python scripts/national_trend_monitor.py
