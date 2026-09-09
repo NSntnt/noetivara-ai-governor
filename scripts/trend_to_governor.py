@@ -136,7 +136,7 @@ def write_dispatch(command, pin):
         if not token:
             raise RuntimeError("再認証後のDispatch prepare returned no token")
         result, _ = post_api({**command, "mode": "execute", "token": token}, fresh_pin)
-    if re.search(r"<ERROR\\b", result, re.I):
+    if re.search(r"<ERROR\b", result, re.I):
         raise RuntimeError("NationStates rejected Dispatch operation")
 
 
