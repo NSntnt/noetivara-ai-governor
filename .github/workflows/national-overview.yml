@@ -183,17 +183,21 @@ jobs:
                   proot = ET.fromstring(prepared)
               except ET.ParseError:
                   print("Dispatch prepare の応答を解析できませんでした。")
+                  print(prepared[:2000])
                   sys.exit(1)
               token = None
+              # NationStates may return either <TOKEN>...</TOKEN> or a direct <SUCCESS>...</SUCCESS>.
               for e in proot.iter():
-                  if e.tag.upper() == "TOKEN" and clean(e.text):
+                  tag = e.tag.upper()
+                  if tag in {"TOKEN", "SUCCESS"} and clean(e.text):
                       token = clean(e.text)
                       break
               if not token:
-                  m = re.search(r"<TOKEN[^>]*>([^<]+)</TOKEN>", prepared, re.I)
+                  m = re.search(r"<(?:TOKEN|SUCCESS)[^>]*>([^<]+)</(?:TOKEN|SUCCESS)>", prepared, re.I)
                   token = m.group(1).strip() if m else None
               if not token:
-                  print("Dispatch prepareでtokenを取得できませんでした。")
+                  print("Dispatch prepareでtoken/successを取得できませんでした。")
+                  print(prepared[:2000])
                   sys.exit(1)
               params["mode"] = "execute"
               params["token"] = token
