@@ -1,0 +1,25 @@
+name: Noetivara Trend-to-Governor Bridge
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "12 * * * *"
+
+permissions: {}
+
+concurrency:
+  group: noetivara-trend-to-governor
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Connect National Trend Monitor to AI Governor
+        env:
+          NS_AUTLOGIN: ${{ secrets.NS_AUTLOGIN }}
+          NS_NATION: ${{ secrets.NS_NATION }}
+        run: python scripts/trend_to_governor.py
