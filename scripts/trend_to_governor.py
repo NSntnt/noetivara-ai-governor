@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -8,7 +9,7 @@ import xml.etree.ElementTree as ET
 NATION = os.environ["NS_NATION"].strip()
 AUTLOGIN = os.environ["NS_AUTLOGIN"].strip()
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
-UA = "Noetivara-AI-Governor/2.0 (by:Noetivara; contact:https://github.com/NSntnt/noetivara-ai-governor; usedBy:Noetivara)"
+UA = "Noetivara-AI-Governor/2.1 (by:Noetivara; contact:https://github.com/NSntnt/noetivara-ai-governor; usedBy:Noetivara)"
 V = "13"
 TREND_TITLE = "Noetivara National Trend Monitor"
 CHANGE_TITLE = "Noetivara Government Change Log"
@@ -45,6 +46,14 @@ def post_api(params, pin):
     )
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read().decode("utf-8"), r.headers
+
+
+def authenticate():
+    _, auth = get_api({"nation": NATION, "q": "ping"}, {"X-Autologin": AUTLOGIN})
+    pin = auth.get("X-Pin")
+    if not pin:
+        raise RuntimeError("X-Pinを取得できませんでした")
+    return pin
 
 
 def find_dispatch_id(xml_text, title):
@@ -93,7 +102,15 @@ def read_dispatch_text(dispatch_id, pin):
 
 
 def write_dispatch(command, pin):
-    prepared, _ = post_api({**command, "mode": "prepare"}, pin)
+    try:
+        prepared, _ = post_api({**command, "mode": "prepare"}, pin)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 403:
+            raise
+        print("X-Pinが無効化された可能性があるため、再認証します。")
+        fresh_pin = authenticate()
+        prepared, _ = post_api({**command, "mode": "prepare"}, fresh_pin)
+        pin = fresh_pin
     root = ET.fromstring(prepared)
     token = None
     for e in root.iter():
@@ -102,7 +119,23 @@ def write_dispatch(command, pin):
             break
     if not token:
         raise RuntimeError("Dispatch prepare returned no token")
-    result, _ = post_api({**command, "mode": "execute", "token": token}, pin)
+    try:
+        result, _ = post_api({**command, "mode": "execute", "token": token}, pin)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 403:
+            raise
+        print("実行時にX-Pinが無効化されたため、再認証してPrepareからやり直します。")
+        fresh_pin = authenticate()
+        prepared, _ = post_api({**command, "mode": "prepare"}, fresh_pin)
+        root = ET.fromstring(prepared)
+        token = None
+        for e in root.iter():
+            if lname(e.tag) in {"TOKEN", "SUCCESS"} and clean(e.text):
+                token = clean(e.text)
+                break
+        if not token:
+            raise RuntimeError("再認証後のDispatch prepare returned no token")
+        result, _ = post_api({**command, "mode": "execute", "token": token}, fresh_pin)
     if re.search(r"<ERROR\b", result, re.I):
         raise RuntimeError("NationStates rejected Dispatch operation")
 
@@ -113,14 +146,9 @@ print("========================================")
 print("NationStatesへ接続しています...")
 
 try:
-    _, auth = get_api({"nation": NATION, "q": "ping"}, {"X-Autologin": AUTLOGIN})
+    pin = authenticate()
 except Exception as exc:
     print(f"NationStates接続エラー: {exc}")
-    sys.exit(1)
-
-pin = auth.get("X-Pin")
-if not pin:
-    print("X-Pinを取得できませんでした。")
     sys.exit(1)
 
 try:
